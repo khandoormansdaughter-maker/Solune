@@ -27,6 +27,7 @@ public abstract class Setting<T> {
         public BooleanSetting(String name, boolean value) {
             super(name, value);
         }
+        
         public void toggle() {
             setValue(!getValue());
         }
@@ -37,6 +38,7 @@ public abstract class Setting<T> {
 
         public NumberSetting(String name, double value, double min, double max, double increment) {
             super(name, value);
+            
             this.min = min;
             this.max = max;
             this.increment = increment;
