@@ -8,10 +8,12 @@ import com.isacofff.clientbase.modules.features.BiomeDisplay;
 import com.isacofff.clientbase.modules.features.ClickGui;
 import com.isacofff.clientbase.modules.features.CoordinatesDisplay;
 import com.isacofff.clientbase.modules.features.CPSCounter;
+import com.isacofff.clientbase.modules.features.CrystalHelper;
 import com.isacofff.clientbase.modules.features.DirectionHUD;
 import com.isacofff.clientbase.modules.features.FPSDisplay;
 import com.isacofff.clientbase.modules.features.Keystrokes;
 import com.isacofff.clientbase.modules.features.LightLevel;
+import com.isacofff.clientbase.modules.features.PearlPredictor;
 import com.isacofff.clientbase.modules.features.Perspective;
 import com.isacofff.clientbase.modules.features.PingDisplay;
 import com.isacofff.clientbase.modules.features.PotionHUD;
@@ -49,6 +51,8 @@ public class Manager {
     modules.add(new SaturationDisplay());
     modules.add(new BiomeDisplay());
     modules.add(new LightLevel());
+    modules.add(new CrystalHelper());
+    modules.add(new PearlPredictor());
     }
 
     public void onTick() {

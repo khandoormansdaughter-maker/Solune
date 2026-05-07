@@ -7,12 +7,20 @@ import net.minecraft.client.gui.ScaledResolution;
 import net.minecraft.item.ItemStack;
 import net.lax1dude.eaglercraft.opengl.GlStateManager;
 
+import com.isacofff.clientbase.settings.Setting;
+
 public class ArmorHUD extends Module {
+
+    public Setting.NumberSetting posX = new Setting.NumberSetting("X Position", 2, 0, 1000, 1);
+    public Setting.NumberSetting posY = new Setting.NumberSetting("Y Position", 100, 0, 1000, 1);
 
     public ArmorHUD() {
         super("Armor HUD", Category.Render);
 
         this.description = "Displays armor durability on screen.";
+
+        settings.add(posX);
+        settings.add(posY);
     }
 
     @Override
@@ -21,8 +29,8 @@ public class ArmorHUD extends Module {
         if (mc.player == null) return;
 
         ScaledResolution sr = new ScaledResolution(mc);
-        int x = 2;
-        int y = sr.getScaledHeight() / 2;
+        int x = posX.getValue().intValue();
+        int y = posY.getValue().intValue();
 
         for (int i = 0; i < 4; i++) {
             ItemStack stack = mc.player.inventory.armorInventory.get(i);

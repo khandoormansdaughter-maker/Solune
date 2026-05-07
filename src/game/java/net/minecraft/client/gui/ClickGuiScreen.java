@@ -33,14 +33,20 @@ public class ClickGuiScreen extends GuiScreen {
 
     public ClickGuiScreen() {
         int screenWidth = 400; // Assume a width
-        int panelWidth = 120;
-        int totalWidth = Category.values().length * panelWidth;
-        int startX = (screenWidth - totalWidth) / 2;
+        int panelWidth = 100;
+        int panelsPerRow = 3;
+        int x = 10;
         int y = 80;
+        int count = 0;
 
         for (Category cat : Category.values()) {
-            panels.add(new Panel(cat, startX, y));
-            startX += panelWidth;
+            panels.add(new Panel(cat, x, y));
+            x += panelWidth + 10;
+            count++;
+            if (count % panelsPerRow == 0) {
+                x = 10;
+                y += 200; // Estimate height
+            }
         }
     }
 
@@ -134,7 +140,7 @@ public class ClickGuiScreen extends GuiScreen {
 
     public class Panel {
         public Category category;
-        public int x, y, width = 120, height = 20;
+        public int x, y, width = 100, height = 20;
         public boolean open = true;
         private NumberSetting draggingSlider = null;
         private int sliderX = 0;
