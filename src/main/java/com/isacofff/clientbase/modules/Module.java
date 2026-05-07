@@ -57,5 +57,6 @@ public abstract class Module {
     public void onEnable() {}
     public void onDisable() {}
     public void onUpdate() {}
+    public void onRender() {}
 
 }

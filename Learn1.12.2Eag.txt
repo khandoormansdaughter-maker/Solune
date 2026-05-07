@@ -1,0 +1,1582 @@
+# Eaglercraft 1.12.2 — Complete Client API Guide
+A practical reference with examples and common questions.
+Written for client developers, modders, and anyone learning the codebase.
+
+---
+
+## TABLE OF CONTENTS
+
+1. The Client Singleton
+2. The Game Loop
+3. The Tick System
+4. The Player System
+5. Input — Keyboard & Mouse
+6. Click Handling
+7. Networking — Sending Packets
+8. Networking — Receiving Packets
+9. The GUI System
+10. Inventory & Containers
+11. The World System
+12. The Rendering System
+13. The Audio System
+14. The Debug System (F3)
+15. World Loading Flow
+16. Mod Hook Points
+17. Eaglercraft-Specific Systems
+18. The Entity Base Class
+19. Common Questions & Answers
+
+---
+
+## 1. THE CLIENT SINGLETON
+
+The `Minecraft` class is the central controller of everything in the game. Every system — the world, the player, rendering, input, networking — is accessed through it.
+
+```java
+// Get the running game instance from anywhere in the codebase
+Minecraft mc = Minecraft.getMinecraft();
+
+// Or use the static field directly
+Minecraft mc = Minecraft.theMinecraft;
+```
+
+Store this reference at the top of your class rather than calling `getMinecraft()` every time. It never changes at runtime.
+
+**What you can access from it:**
+
+```java
+mc.player              // the local player (EntityPlayerSP)
+mc.world               // the loaded world (WorldClient)
+mc.playerController    // block breaking, attacking, placing
+mc.entityRenderer      // camera and world rendering
+mc.currentScreen       // the GUI screen currently open (null if none)
+mc.objectMouseOver     // what the player is currently looking at
+mc.gameSettings        // keybinds, render distance, sound, etc.
+mc.mcSoundHandler      // play sounds
+mc.getConnection()     // network handler (null if not in a world)
+```
+
+---
+
+## 2. THE GAME LOOP
+
+`runGameLoop()` is called every frame. Everything in the game flows through it.
+
+**Order of execution each frame:**
+
+```
+runGameLoop()
+  │
+  ├── handle scheduled tasks
+  ├── runTick()              ← game logic (20 times per second)
+  ├── entityRenderer.updateCameraAndRender()   ← draw everything
+  └── Display.update()       ← swap buffers, push to screen
+```
+
+You never call `runGameLoop()` yourself. It runs automatically. Your job is to hook into the right part of it.
+
+**Why this matters for modding:**
+
+If you want to run code every tick (20 times per second), hook into `runTick()`.
+If you want to run code every rendered frame (60+ times per second), hook into the renderer.
+These are different — don't confuse them. Rendering runs more often than ticking.
+
+---
+
+## 3. THE TICK SYSTEM
+
+`runTick()` is the game logic heartbeat. It runs approximately 20 times per second regardless of frame rate.
+
+**What happens inside a tick:**
+
+```java
+// These all run automatically inside runTick():
+
+world.tick();                          // block updates, weather, time
+world.updateEntities();                // move and update all entities
+playerController.updateController();  // block breaking, item usage
+mcSoundHandler.update();              // sound position updates
+// + GUI updates
+// + packet flushing
+// + keyboard and mouse input
+```
+
+**Injecting your own tick logic:**
+
+```java
+// Example: run something every tick
+@Override
+public void onClientTick(TickEvent.ClientTickEvent event) {
+    if (event.phase != TickEvent.Phase.START) return;
+
+    Minecraft mc = Minecraft.getMinecraft();
+
+    // Only run if in a world
+    if (mc.world == null || mc.player == null) return;
+
+    // Your code here — runs 20 times per second
+    doMyThing();
+}
+```
+
+**Partial ticks:**
+
+Rendering runs faster than 20 TPS. The renderer gets a `partialTicks` float (0.0 to 1.0) representing how far between two ticks the current frame is. Use it to interpolate positions for smooth rendering.
+
+```java
+// Smooth position between ticks
+double renderX = lastX + (currentX - lastX) * partialTicks;
+```
+
+---
+
+## 4. THE PLAYER SYSTEM
+
+`EntityPlayerSP` is the local player. It sits between your input devices and the server. Every action you take goes through it.
+
+```
+Keyboard / Mouse
+      ↓
+EntityPlayerSP   ← local simulation (instant feedback)
+      ↓
+CPacket*         ← tells the server what happened
+      ↓
+Server validates and corrects if needed
+```
+
+**Accessing the player:**
+
+```java
+EntityPlayerSP player = Minecraft.getMinecraft().player;
+```
+
+**Null check — player is null when not in a world:**
+
+```java
+if (mc.player == null) return; // always check this
+```
+
+**Common player fields:**
+
+```java
+player.posX, player.posY, player.posZ      // current position
+player.lastTickPosX, lastTickPosY, ...     // position last tick (for interpolation)
+player.motionX, player.motionY, player.motionZ  // velocity per tick
+player.rotationYaw                          // horizontal look angle (0-360)
+player.rotationPitch                        // vertical look angle (-90 to 90)
+player.onGround                             // true if standing on something
+player.fallDistance                         // how far they've fallen this drop
+player.health                               // current health (float, max 20.0)
+player.getFoodStats().getFoodLevel()        // hunger (0-20)
+player.inventory.currentItem               // currently selected hotbar slot (0-8)
+```
+
+**Checking abilities:**
+
+```java
+player.capabilities.isCreativeMode   // creative mode
+player.capabilities.isFlying         // currently flying
+player.capabilities.allowFlying      // allowed to fly (creative/spectator)
+player.capabilities.disableDamage    // spectator / invulnerable
+player.capabilities.walkSpeed        // movement speed modifier
+```
+
+**Triggering player actions:**
+
+```java
+// Swing the arm (visual + packet)
+player.swingArm(EnumHand.MAIN_HAND);
+
+// Send a chat message to the server
+player.sendChatMessage("Hello world");
+
+// Drop the held item
+player.dropItem(false);  // false = one item, true = whole stack
+
+// Trigger the respawn screen (or auto-respawn)
+player.respawnPlayer();
+
+// Update abilities on the server after changing them client-side
+player.sendPlayerAbilities();
+```
+
+**Sprint and sneak state:**
+
+```java
+// Check current states
+player.isSprinting()     // is sprinting right now
+player.isSneaking()      // is sneaking right now
+
+// Manually trigger sprint start
+player.setSprinting(true);
+// This also sends the correct CPacketEntityAction to the server
+```
+
+**Reading the held item:**
+
+```java
+ItemStack held = player.getHeldItemMainhand();
+
+if (!held.isEmpty()) {
+    Item item = held.getItem();
+    int count = held.getCount();
+    NBTTagCompound nbt = held.getTagCompound(); // null if no NBT
+}
+```
+
+---
+
+## 5. INPUT — KEYBOARD & MOUSE
+
+Input processing is split across two methods that run each tick:
+- `runTickKeyboard()` — processes key events
+- `runTickMouse()` — processes mouse events
+
+**Using KeyBindings (the right way):**
+
+```java
+// Register a new key binding at startup
+KeyBinding myKey = new KeyBinding(
+    "key.mymod.fly",         // language key for the controls menu
+    Keyboard.KEY_G,          // default key (can be rebound by user)
+    "key.categories.mymod"  // category name in controls menu
+);
+ClientRegistry.registerKeyBinding(myKey);
+
+// Check for a press in your tick handler
+while (myKey.isPressed()) {
+    // isPressed() consumes the event — fires once per press, not every frame
+    toggleFlight();
+}
+
+// Check if currently held down
+if (myKey.isKeyDown()) {
+    // fires every tick while held
+}
+```
+
+**Why use KeyBinding over raw Keyboard.isKeyDown():**
+- Respects user remappings
+- Automatically ignored when a GUI screen is open
+- Works with the controls menu
+- Correctly handles key repeat
+
+**Accessing built-in key bindings:**
+
+```java
+GameSettings keys = mc.gameSettings;
+
+keys.keyBindForward       // W
+keys.keyBindBack          // S
+keys.keyBindLeft          // A
+keys.keyBindRight         // D
+keys.keyBindJump          // Space
+keys.keyBindSneak         // Shift
+keys.keyBindSprint        // Ctrl
+keys.keyBindInventory     // E
+keys.keyBindAttack        // Left Click
+keys.keyBindUseItem       // Right Click
+keys.keyBindPickBlock     // Middle Click
+keys.keyBindsHotbar[0-8]  // 1 through 9
+keys.keyBindDrop          // Q
+keys.keyBindChat          // T
+```
+
+**Mouse position and state:**
+
+```java
+// Mouse screen position (pixels, top-left origin)
+int mouseX = Mouse.getX();
+int mouseY = Mouse.getY();
+
+// Is a mouse button held?
+Mouse.isButtonDown(0)  // left button
+Mouse.isButtonDown(1)  // right button
+Mouse.isButtonDown(2)  // middle button
+
+// Scroll wheel delta this frame
+int scroll = Mouse.getDWheel();
+if (scroll > 0) { /* scrolled up */ }
+if (scroll < 0) { /* scrolled down */ }
+```
+
+---
+
+## 6. CLICK HANDLING
+
+Left and right clicks on the world are managed by the `Minecraft` class and routed through `PlayerControllerMP`.
+
+**How left click works:**
+
+```java
+// Called automatically each tick when left mouse is held
+mc.clickMouse();
+// → calls playerController.onPlayerDamageBlock() for block breaking
+// → calls playerController.attackEntity() for hitting entities
+```
+
+**How right click works:**
+
+```java
+// Called automatically when right mouse is pressed
+mc.rightClickMouse();
+// → calls playerController.processRightClick() for item use
+// → calls playerController.processRightClickBlock() for block interaction
+```
+
+**Simulating a click in code:**
+
+```java
+// Force a left click this tick
+Minecraft.getMinecraft().clickMouse();
+
+// Force a right click this tick
+Minecraft.getMinecraft().rightClickMouse();
+```
+
+**What the player is looking at:**
+
+```java
+MovingObjectPosition target = mc.objectMouseOver;
+
+if (target == null) {
+    // not looking at anything in range
+} else if (target.typeOfHit == MovingObjectPosition.MovingObjectType.BLOCK) {
+    BlockPos pos = target.getBlockPos();
+    EnumFacing face = target.sideHit;  // which face of the block
+} else if (target.typeOfHit == MovingObjectPosition.MovingObjectType.ENTITY) {
+    Entity entity = target.entityHit;
+}
+```
+
+---
+
+## 7. NETWORKING — SENDING PACKETS
+
+All client → server communication goes through `NetHandlerPlayClient`. Get it from `mc.getConnection()`.
+
+```java
+NetHandlerPlayClient conn = mc.getConnection();
+if (conn == null) return; // not connected
+```
+
+**Common packets to send:**
+
+```java
+// Movement
+conn.sendPacket(new CPacketPlayer.Position(x, y, z, onGround));
+conn.sendPacket(new CPacketPlayer.Rotation(yaw, pitch, onGround));
+conn.sendPacket(new CPacketPlayer.PositionRotation(x, y, z, yaw, pitch, onGround));
+
+// Player state changes
+conn.sendPacket(new CPacketEntityAction(player, CPacketEntityAction.Action.START_SPRINTING));
+conn.sendPacket(new CPacketEntityAction(player, CPacketEntityAction.Action.STOP_SPRINTING));
+conn.sendPacket(new CPacketEntityAction(player, CPacketEntityAction.Action.START_SNEAKING));
+conn.sendPacket(new CPacketEntityAction(player, CPacketEntityAction.Action.STOP_SNEAKING));
+
+// Chat
+conn.sendPacket(new CPacketChatMessage("your message here"));
+
+// Arm animation
+conn.sendPacket(new CPacketAnimation(EnumHand.MAIN_HAND));
+
+// Close a container (chest, etc.)
+conn.sendPacket(new CPacketCloseWindow(player.openContainer.windowId));
+
+// Abilities (after changing capabilities)
+conn.sendPacket(new CPacketPlayerAbilities(player.capabilities));
+
+// Respawn
+conn.sendPacket(new CPacketClientStatus(CPacketClientStatus.State.PERFORM_RESPAWN));
+```
+
+**Vehicle movement (while riding):**
+
+```java
+// If riding a boat, minecart, or horse
+conn.sendPacket(new CPacketVehicleMove(mc.player.getRidingEntity()));
+```
+
+**Important:** The movement packets are sent automatically every tick by `EntityPlayerSP.onUpdateWalkingPlayer()`. Only send them manually if you've taken over movement logic yourself. Sending both will cause jittery behavior on the server.
+
+---
+
+## 8. NETWORKING — RECEIVING PACKETS
+
+Incoming server → client packets are handled in `NetHandlerPlayClient`. Each packet type has its own `handle*` method.
+
+**How it works:**
+
+```java
+// The server sends a packet. NetworkManager decodes it.
+// Then it calls the matching handler, for example:
+
+public void handleEntityTeleport(SPacketEntityTeleport packetIn) {
+    // find the entity
+    Entity entity = world.getEntityByID(packetIn.getEntityId());
+    if (entity == null) return;
+
+    // apply the server's authoritative position
+    entity.serverPosX = packetIn.getX();
+    entity.serverPosY = packetIn.getY();
+    entity.serverPosZ = packetIn.getZ();
+}
+```
+
+**Commonly important incoming packets:**
+
+```java
+handleRespawn()           // player respawned — world reloads
+handleJoinGame()          // just connected to a server
+handleChat()              // received a chat message
+handleUpdateHealth()      // server corrected your health/food/saturation
+handleEntityTeleport()    // entity moved suddenly (lag correction)
+handleBlockChange()       // a single block changed
+handleMultiBlockChange()  // multiple blocks changed at once
+handleOpenWindow()        // server wants to open a GUI (chest, furnace, etc.)
+handleSetSlot()           // a single inventory slot updated
+handleWindowItems()       // entire container contents sent
+handleExplosion()         // explosion happened — apply knockback and block removals
+handleSoundEffect()       // play a sound at a location
+handleParticles()         // spawn particles
+handleChangeGameState()   // weather, game mode, credits, demo messages
+handleKeepAlive()         // server ping — must reply or get kicked
+```
+
+**Intercepting a packet (mixin/hook example):**
+
+```java
+// In a mixin targeting NetHandlerPlayClient
+@Inject(method = "handleChat", at = @At("HEAD"))
+private void onChatReceived(SPacketChat packet, CallbackInfo ci) {
+    String message = packet.getChatComponent().getUnformattedText();
+    if (message.contains("yourTrigger")) {
+        doSomething();
+    }
+}
+```
+
+**Custom plugin channel (MC|Brand, server plugins):**
+
+```java
+public void handleCustomPayload(SPacketCustomPayload packetIn) {
+    String channel = packetIn.getChannelName();
+    PacketBuffer data = packetIn.getBufferData();
+
+    if ("MC|Brand".equals(channel)) {
+        String serverBrand = data.readString(32767);
+        // e.g. "Paper", "Spigot", "EaglerXBungee"
+    }
+
+    if ("mymod:channel".equals(channel)) {
+        int value = data.readInt();
+        // handle your custom data
+    }
+}
+```
+
+---
+
+## 9. THE GUI SYSTEM
+
+All screens in the game — menus, inventories, chat, pause — are `GuiScreen` instances.
+
+**Opening a screen:**
+
+```java
+// Open any screen
+mc.displayGuiScreen(new GuiInventory(mc.player));
+
+// Close the current screen (return to game)
+mc.displayGuiScreen(null);
+```
+
+**What displayGuiScreen does:**
+1. Calls `onGuiClosed()` on the old screen
+2. Sets `mc.currentScreen` to the new screen
+3. Calls `initGui()` on the new screen
+4. Resets mouse capture if needed
+
+**Checking what screen is open:**
+
+```java
+if (mc.currentScreen == null) {
+    // in game, no menu open
+} else if (mc.currentScreen instanceof GuiChat) {
+    // chat is open
+} else if (mc.currentScreen instanceof GuiInventory) {
+    // inventory is open
+} else if (mc.currentScreen instanceof GuiIngameMenu) {
+    // escape/pause menu is open
+}
+```
+
+**Creating a custom screen:**
+
+```java
+public class MyScreen extends GuiScreen {
+
+    @Override
+    public void initGui() {
+        // add buttons here
+        buttonList.add(new GuiButton(0, width / 2 - 50, height / 2, 100, 20, "Click Me"));
+    }
+
+    @Override
+    protected void actionPerformed(GuiButton button) {
+        if (button.id == 0) {
+            // button was clicked
+            mc.displayGuiScreen(null); // close the screen
+        }
+    }
+
+    @Override
+    public void drawScreen(int mouseX, int mouseY, float partialTicks) {
+        drawDefaultBackground(); // the dark overlay
+        drawCenteredString(fontRenderer, "My Screen", width / 2, 40, 0xFFFFFF);
+        super.drawScreen(mouseX, mouseY, partialTicks); // draws buttons
+    }
+
+    @Override
+    public boolean doesGuiPauseGame() {
+        return false; // set to true to pause in singleplayer
+    }
+}
+```
+
+**Opening it:**
+
+```java
+mc.displayGuiScreen(new MyScreen());
+```
+
+---
+
+## 10. INVENTORY & CONTAINERS
+
+The `Container` class handles all inventory logic. `GuiContainer` handles rendering it. `PlayerControllerMP.windowClick()` is the bridge that connects mouse clicks to inventory actions.
+
+**Click flow:**
+
+```
+Mouse click in GuiContainer
+        ↓
+determine ClickType
+        ↓
+PlayerControllerMP.windowClick()
+        ↓
+Container.slotClick()
+        ↓
+Slot rules checked, items moved
+        ↓
+detectAndSendChanges() → SPacketSetSlot to client
+```
+
+**ClickType — what each one means:**
+
+```java
+ClickType.PICKUP       // normal left or right click — pick up or place
+ClickType.QUICK_MOVE   // shift+click — move item to other inventory
+ClickType.SWAP         // press number key — swap with hotbar slot
+ClickType.CLONE        // middle click (creative) — copy item
+ClickType.THROW        // Q key — drop item
+ClickType.QUICK_CRAFT  // click and drag across slots — split stack
+ClickType.PICKUP_ALL   // double click — collect all matching items
+```
+
+**Simulating a click on a slot:**
+
+```java
+// Normal left click on slot 5
+mc.playerController.windowClick(
+    container.windowId,
+    5,               // slot index
+    0,               // 0 = left button
+    ClickType.PICKUP,
+    mc.player
+);
+
+// Shift-click slot 5 (move to other inventory)
+mc.playerController.windowClick(
+    container.windowId,
+    5,
+    0,
+    ClickType.QUICK_MOVE,
+    mc.player
+);
+
+// Swap slot 5 with hotbar slot 2 (press key "3")
+mc.playerController.windowClick(
+    container.windowId,
+    5,
+    2,               // hotbar index 0-8
+    ClickType.SWAP,
+    mc.player
+);
+
+// Drop item from cursor (click outside inventory)
+mc.playerController.windowClick(
+    container.windowId,
+    -999,            // -999 = outside the window
+    0,
+    ClickType.THROW,
+    mc.player
+);
+```
+
+**Reading inventory slots:**
+
+```java
+// Player inventory has 36 slots (0-8 = hotbar, 9-35 = backpack)
+IInventory inv = mc.player.inventory;
+
+for (int i = 0; i < inv.getSizeInventory(); i++) {
+    ItemStack stack = inv.getStackInSlot(i);
+    if (!stack.isEmpty()) {
+        System.out.println("Slot " + i + ": " + stack.getItem().getRegistryName());
+    }
+}
+```
+
+**Getting the currently open container:**
+
+```java
+// player.openContainer is always set — even when no GUI is open
+// it defaults to player.inventoryContainer
+
+Container container = mc.player.openContainer;
+List<Slot> slots = container.inventorySlots;
+
+for (Slot slot : slots) {
+    ItemStack stack = slot.getStack();
+    int x = slot.xPos; // GUI pixel position
+    int y = slot.yPos;
+}
+```
+
+**Writing a custom container restriction (slot that only accepts one item type):**
+
+```java
+// In your Container class
+addSlotToContainer(new Slot(inventory, 0, 80, 35) {
+    @Override
+    public boolean isItemValid(ItemStack stack) {
+        return stack.getItem() == Items.DIAMOND;
+    }
+
+    @Override
+    public int getSlotStackLimit() {
+        return 1; // only one item allowed
+    }
+});
+```
+
+**Writing transferStackInSlot (shift-click logic):**
+
+```java
+@Override
+public ItemStack transferStackInSlot(EntityPlayer player, int index) {
+    Slot slot = inventorySlots.get(index);
+    if (slot == null || !slot.getHasStack()) return ItemStack.EMPTY;
+
+    ItemStack stack = slot.getStack();
+    ItemStack copy = stack.copy();
+
+    if (index < 27) {
+        // From chest side → try to put in player inventory
+        if (!mergeItemStack(stack, 27, 63, true)) return ItemStack.EMPTY;
+    } else {
+        // From player side → try to put in chest
+        if (!mergeItemStack(stack, 0, 27, false)) return ItemStack.EMPTY;
+    }
+
+    if (stack.isEmpty()) slot.putStack(ItemStack.EMPTY);
+    else slot.onSlotChanged();
+
+    return copy;
+}
+```
+
+---
+
+## 11. THE WORLD SYSTEM
+
+`WorldClient` is the client's copy of the world. It does NOT run the full simulation — the server does that. The client just renders what it knows.
+
+**Accessing the world:**
+
+```java
+WorldClient world = mc.world;
+if (world == null) return; // not in a world
+```
+
+**Getting blocks:**
+
+```java
+BlockPos pos = new BlockPos(x, y, z);
+
+// Get the block state at a position
+IBlockState state = world.getBlockState(pos);
+Block block = state.getBlock();
+
+// Check if it's air
+boolean isAir = world.isAirBlock(pos);
+
+// Get light level
+int light = world.getLightBrightness(pos); // 0-15
+
+// Check if a position is loaded
+boolean loaded = world.isBlockLoaded(pos);
+```
+
+**Working with entities:**
+
+```java
+// Get all entities in a bounding box
+AxisAlignedBB box = new AxisAlignedBB(x1, y1, z1, x2, y2, z2);
+List<Entity> nearby = world.getEntitiesWithinAABB(Entity.class, box);
+
+// Get a specific entity by ID
+Entity entity = world.getEntityByID(entityId);
+
+// Spawn a particle
+world.spawnParticle(EnumParticleTypes.SMOKE_NORMAL, x, y, z, 0, 0, 0);
+
+// Get the time of day
+long time = world.getWorldTime();
+boolean isDay = world.isDaytime();
+
+// Get weather
+boolean raining = world.isRaining();
+boolean thundering = world.isThundering();
+```
+
+**Loading / unloading a world:**
+
+```java
+// Load a new world (this is what happens when joining a server or loading singleplayer)
+mc.loadWorld(new WorldClient(...), "Loading...");
+// This automatically:
+// - disconnects network
+// - resets the player
+// - clears old rendering state
+// - spawns the player into the new world
+
+// Unload / go to main menu
+mc.loadWorld(null);
+```
+
+---
+
+## 12. THE RENDERING SYSTEM
+
+Rendering runs every frame (not tied to the tick rate). The main entry point is `EntityRenderer.updateCameraAndRender()`.
+
+**Key rendering objects:**
+
+```java
+mc.entityRenderer    // controls camera, FOV, bobbing, shaders
+mc.renderGlobal      // chunks, sky, weather
+mc.renderItem        // renders items in GUIs
+mc.itemRenderer      // renders the held item in first-person
+mc.effectRenderer    // particles
+```
+
+**Rendering in a GUI screen (drawScreen):**
+
+```java
+@Override
+public void drawScreen(int mouseX, int mouseY, float partialTicks) {
+    // Draw the dark background overlay
+    drawDefaultBackground();
+
+    // Draw a colored rectangle
+    drawRect(x1, y1, x2, y2, 0xFF333333);  // ARGB format
+
+    // Draw text
+    drawString(fontRenderer, "Hello", x, y, 0xFFFFFF);
+    drawCenteredString(fontRenderer, "Centered", width / 2, y, 0xFFFFFF);
+
+    // Draw an item icon
+    RenderHelper.enableGUIStandardItemLighting();
+    mc.getRenderItem().renderItemIntoGUI(itemStack, x, y);
+    RenderHelper.disableStandardItemLighting();
+
+    // Always call super to render buttons
+    super.drawScreen(mouseX, mouseY, partialTicks);
+}
+```
+
+**Rendering in the world (3D):**
+
+```java
+// Hook into RenderWorldLastEvent or similar event
+GlStateManager.pushMatrix();
+GlStateManager.translate(x - viewX, y - viewY, z - viewZ); // offset from camera
+GlStateManager.color(1.0f, 0.0f, 0.0f, 1.0f);             // red
+
+// Draw your geometry using Tessellator
+Tessellator tess = Tessellator.getInstance();
+BufferBuilder buf = tess.getBuffer();
+buf.begin(GL11.GL_QUADS, DefaultVertexFormats.POSITION);
+buf.pos(0, 0, 0).endVertex();
+buf.pos(1, 0, 0).endVertex();
+buf.pos(1, 1, 0).endVertex();
+buf.pos(0, 1, 0).endVertex();
+tess.draw();
+
+GlStateManager.popMatrix();
+```
+
+**GUI scaling:**
+
+```java
+ScaledResolution sr = new ScaledResolution(mc);
+int screenWidth  = sr.getScaledWidth();   // logical GUI pixels wide
+int screenHeight = sr.getScaledHeight();  // logical GUI pixels tall
+int scaleFactor  = sr.getScaleFactor();   // 1, 2, 3, or 4
+```
+
+---
+
+## 13. THE AUDIO SYSTEM
+
+```java
+// Play a sound effect at a world position
+mc.world.playSound(
+    mc.player,               // listener entity (usually the player)
+    blockPos,                // where the sound comes from
+    SoundEvents.ENTITY_PLAYER_LEVELUP,
+    SoundCategory.PLAYERS,
+    1.0f,                    // volume (0.0 - 1.0+)
+    1.0f                     // pitch (0.5 = low, 2.0 = high)
+);
+
+// Play a sound at the player's position (no 3D positioning)
+mc.player.playSound(SoundEvents.ENTITY_PLAYER_HURT, 1.0f, 1.0f);
+
+// Play a sound through the sound handler directly
+mc.mcSoundHandler.playSound(
+    PositionedSoundRecord.getMasterRecord(SoundEvents.UI_BUTTON_CLICK, 1.0f)
+);
+
+// Stop all sounds
+mc.mcSoundHandler.stopSounds();
+```
+
+---
+
+## 14. THE DEBUG SYSTEM (F3)
+
+F3 key handling runs in `processKeyF3(int key)`. It checks additional key combinations when F3 is already held.
+
+**What each F3 combo does:**
+
+```
+F3         — toggle debug overlay
+F3 + A     — reload all chunks
+F3 + B     — toggle hitbox rendering
+F3 + C     — copy position to clipboard
+F3 + D     — clear chat history
+F3 + F     — cycle render distance
+F3 + G     — toggle chunk border rendering
+F3 + H     — toggle advanced tooltips (item IDs, durability)
+F3 + N     — toggle spectator / previous game mode
+F3 + P     — toggle pause on lost focus
+F3 + T     — reload resource packs
+```
+
+**Toggling hitbox rendering in code:**
+
+```java
+mc.getRenderManager().setDebugBoundingBox(!mc.getRenderManager().isDebugBoundingBox());
+```
+
+**Checking if debug overlay is showing:**
+
+```java
+if (mc.gameSettings.showDebugInfo) {
+    // F3 overlay is visible
+}
+```
+
+---
+
+## 15. WORLD LOADING FLOW
+
+When `mc.loadWorld()` is called, this sequence happens in order:
+
+```
+1. Disconnect from current network connection
+2. Stop the integrated server (if singleplayer)
+3. Call currentScreen.onGuiClosed() if a screen was open
+4. Clear world — mc.world = null
+5. Reset particle / effect renderer
+6. Reset the entity renderer
+7. Set mc.world to the new WorldClient
+8. Create a new EntityPlayerSP
+9. Set the player's entity ID and position
+10. Call player.preparePlayerToSpawn()
+11. Spawn player into world via world.spawnEntityInWorld(player)
+12. Initialize rendering for the new world
+13. Open the loading screen GUI
+14. Trigger initial chunk loading
+```
+
+This is why any mod code that touches `mc.world` or `mc.player` must null-check them — they are both null during transitions.
+
+---
+
+## 16. MOD HOOK POINTS
+
+These are the best places to inject custom logic. Each one has a clear purpose and minimal side effects if used carefully.
+
+**Tick hook — run logic every tick:**
+```java
+// Best for: movement hacks, auto-clickers, module ticks, timers
+@SubscribeEvent
+public void onClientTick(TickEvent.ClientTickEvent event) {
+    if (event.phase != TickEvent.Phase.END) return;
+    if (mc.world == null || mc.player == null) return;
+    // your code
+}
+```
+
+**Render hook — run every frame:**
+```java
+// Best for: ESP, tracers, custom HUD elements, overlays
+@SubscribeEvent
+public void onRenderTick(TickEvent.RenderTickEvent event) {
+    if (event.phase != TickEvent.Phase.END) return;
+    // your code — partialTicks available as event.renderTickTime
+}
+```
+
+**Keyboard hook:**
+```java
+// Best for: custom keybinds, macro triggers
+// Use KeyBinding registration (see Section 5)
+// or hook runTickKeyboard() via mixin
+```
+
+**GUI hook:**
+```java
+// Best for: adding elements to existing screens, detecting when screens open
+@SubscribeEvent
+public void onGuiOpen(GuiOpenEvent event) {
+    // event.gui is the screen being opened (null = closing)
+    if (event.gui instanceof GuiMainMenu) {
+        // main menu is opening
+    }
+}
+```
+
+**World load hook:**
+```java
+// Best for: resetting module state, detecting server connections
+@SubscribeEvent
+public void onWorldLoad(WorldEvent.Load event) {
+    // a world just loaded
+}
+```
+
+**Custom client injection point (from source code):**
+
+```java
+// This line exists in startGame():
+com.isacofff.clientbase.Client.INSTANCE.init();
+
+// This is after Minecraft finishes initializing.
+// It's the best place to register your modules, key bindings, and event listeners.
+// Everything is ready — world, player, renderer — well, not yet loaded, but initialized.
+```
+
+---
+
+## 17. EAGLERCRAFT-SPECIFIC SYSTEMS
+
+These systems do not exist in vanilla Minecraft. They exist because Eaglercraft runs in a web browser.
+
+**EagRuntime / PlatformRuntime** — replaces the Java AWT/LWJGL system. Handles browser window management, file I/O, and platform detection.
+
+**Display** — not the LWJGL Display class. This is Eaglercraft's canvas/WebGL bridge. `Display.update()` pushes a rendered frame to the HTML canvas element.
+
+**EaglercraftGPU** — Eaglercraft's abstraction over WebGL. If something works in vanilla but not in Eagler, this is usually where to look.
+
+**WebViewOverlayController** — manages the in-game web overlay (if enabled). Used for server browser, login screens, etc.
+
+**RateLimitTracker** — server-side rate limiting for multiplayer. Tracks packet rates to prevent abuse.
+
+**ClientUUIDLoadingCache** — caches UUID-to-username lookups. Used because Eaglercraft can't always hit Mojang's API.
+
+**Key difference from vanilla:**
+- No compression support on the network layer (`CompressionNotSupportedException` is thrown if a server tries to enable it)
+- WebSocket instead of TCP
+- Browser storage instead of filesystem for some settings
+- Skin loading goes through Eaglercraft's skin server, not skins.minecraft.net
+
+---
+
+## 18. THE ENTITY BASE CLASS
+
+`Entity` is the abstract base class for everything that exists in the world — players, mobs, items, projectiles, boats, and more. You'll interact with it constantly when writing ESP, targeting logic, or anything involving entities other than the player.
+
+### Identity and Lifecycle
+
+```java
+entity.entityId          // integer ID, unique within a running world session
+entity.getUniqueID()     // EaglercraftUUID — stable across sessions (like Mojang UUID)
+entity.isDead            // true once setDead() has been called
+entity.ticksExisted      // how many ticks this entity has been alive
+entity.forceSpawn        // if true, bypasses normal spawn eligibility checks
+
+// Kill an entity (flags it for removal next tick)
+entity.setDead();
+
+// Check if still alive
+if (entity.isEntityAlive()) { ... }  // equivalent to !entity.isDead
+```
+
+### Position and Movement
+
+All position fields are `double`. Always use `lastTickPos*` alongside `pos*` for interpolation in render hooks.
+
+```java
+entity.posX, entity.posY, entity.posZ          // current position
+entity.prevPosX, entity.prevPosY, entity.prevPosZ  // position at start of this tick
+entity.lastTickPosX, entity.lastTickPosY, entity.lastTickPosZ  // position at end of last tick
+entity.motionX, entity.motionY, entity.motionZ // velocity (blocks per tick)
+
+entity.rotationYaw    // horizontal angle, degrees (0–360)
+entity.rotationPitch  // vertical angle, degrees (-90 to 90)
+entity.prevRotationYaw, entity.prevRotationPitch  // last tick's angles
+
+entity.onGround       // true if standing on a solid surface
+entity.fallDistance   // accumulated fall distance this drop (resets on landing)
+
+entity.width          // collision box width (default 0.6)
+entity.height         // collision box height (default 1.8)
+entity.stepHeight     // how high a step the entity can auto-climb (players: 0.6)
+entity.noClip         // if true, entity passes through blocks (spectator-like)
+```
+
+**Smooth interpolated position for rendering:**
+
+```java
+// Use this pattern in render hooks to avoid jitter
+double renderX = entity.lastTickPosX + (entity.posX - entity.lastTickPosX) * partialTicks;
+double renderY = entity.lastTickPosY + (entity.posY - entity.lastTickPosY) * partialTicks;
+double renderZ = entity.lastTickPosZ + (entity.posZ - entity.lastTickPosZ) * partialTicks;
+```
+
+**Moving an entity:**
+
+```java
+// Teleport with full position+rotation reset (also updates prevPos and lastTickPos)
+entity.setLocationAndAngles(x, y, z, yaw, pitch);
+
+// Move to a BlockPos (centers on X/Z, lands on top of the block)
+entity.moveToBlockPosAndAngles(blockPos, yaw, pitch);
+
+// Apply physics-based movement (respects collision, stepHeight, web slowdown)
+entity.moveEntity(MoverType.SELF, dx, dy, dz);
+
+// Directly set position and update bounding box (no collision check)
+entity.setPosition(x, y, z);
+
+// Add to current velocity
+entity.addVelocity(dx, dy, dz);
+
+// Set velocity directly
+entity.setVelocity(x, y, z);
+```
+
+### Bounding Box
+
+```java
+// Get the current AABB
+AxisAlignedBB box = entity.getEntityBoundingBox();
+
+// The eye height is used for ray tracing and line-of-sight checks
+float eyeHeight = entity.getEyeHeight();  // defaults to height * 0.85
+
+// Get the position of the entity's eyes (used for raytrace origin)
+Vec3d eyePos = entity.getPositionEyes(partialTicks);
+```
+
+### Look Direction
+
+```java
+// Get a normalized look vector (interpolated with partialTicks)
+Vec3d look = entity.getLook(partialTicks);
+
+// Raycast from the entity's eyes — returns the first block hit
+RayTraceResult result = entity.rayTrace(reach, partialTicks);
+// result is null if nothing in range, or check result.typeOfHit
+
+// Get the entity's forward vector from pitch/yaw (no interpolation)
+Vec3d forward = entity.getLookVec();
+```
+
+### State Flags
+
+These are packed into a single `DataParameter<Byte>` sent over the network. Read them with the helper methods — don't read the byte directly.
+
+```java
+entity.isBurning()    // on fire
+entity.isSneaking()   // crouching
+entity.isSprinting()  // sprinting
+entity.isInvisible()  // invisible (e.g. from potion)
+entity.isGlowing()    // has glowing outline effect
+
+// Setters — these sync to clients automatically on the server side
+entity.setSneaking(true);
+entity.setSprinting(true);
+entity.setInvisible(true);
+entity.setGlowing(true);
+```
+
+### Fire and Environmental Damage
+
+```java
+// Set on fire for N seconds (cannot lower existing fire duration)
+entity.setFire(5);
+
+// Remove fire immediately
+entity.extinguish();
+
+// Check if currently in lava
+entity.isInLava();
+
+// Check if in water
+entity.isInWater();
+
+// Check if wet (water or rain)
+entity.isWet();
+```
+
+### Riding / Passengers
+
+Entities can ride other entities (player on horse, player in boat, etc.). One entity is the "vehicle" and the other is the "passenger."
+
+```java
+// Check if this entity is riding something
+entity.isRiding();
+entity.getRidingEntity();  // returns the vehicle, or null
+
+// Check if something is riding this entity
+entity.isBeingRidden();
+entity.getPassengers();    // List<Entity>
+entity.getControllingPassenger();  // the passenger steering this vehicle (may be null)
+
+// Make an entity start riding a vehicle
+passenger.startRiding(vehicle);
+passenger.startRiding(vehicle, true);  // force=true skips canBeRidden checks
+
+// Dismount
+entity.dismountRidingEntity();
+
+// Remove all passengers
+vehicle.removePassengers();
+
+// Check if two entities share the same vehicle chain
+entityA.isRidingSameEntity(entityB);
+```
+
+### Distance Checks
+
+```java
+// Distance to another entity
+float dist = entity.getDistanceToEntity(otherEntity);
+double distSq = entity.getDistanceSqToEntity(otherEntity);  // cheaper, no sqrt
+
+// Distance to a position
+double dist = entity.getDistance(x, y, z);
+double distSq = entity.getDistanceSq(x, y, z);
+
+// Distance to a BlockPos (uses block corner, not center)
+double distSq = entity.getDistanceSq(blockPos);
+
+// Distance to a BlockPos center
+double distSq = entity.getDistanceSqToCenter(blockPos);
+```
+
+### Tags and Custom Names
+
+```java
+// Scoreboard-style string tags (up to 1024 per entity)
+entity.addTag("myTag");
+entity.removeTag("myTag");
+entity.getTags();  // Set<String>
+
+// Custom name (shown above entity's head)
+entity.hasCustomName();
+entity.getCustomNameTag();          // raw string
+entity.setCustomNameTag("Bob");
+entity.setAlwaysRenderNameTag(true); // show name even when not targeted
+```
+
+### Team and Visibility
+
+```java
+// Get the scoreboard team this entity belongs to
+Team team = entity.getTeam();
+
+// Check if two entities are teammates
+entityA.isOnSameTeam(entityB);
+
+// Check if invisible to a specific player (accounts for team seeFriendlyInvisibles)
+boolean hidden = entity.isInvisibleToPlayer(player);
+```
+
+### NBT Serialization
+
+Entities save and load their state through NBT. You generally don't call these manually on the client, but they're useful to know when reading entity data.
+
+```java
+// Write entity data to NBT (returns the compound)
+NBTTagCompound tag = new NBTTagCompound();
+entity.writeToNBT(tag);
+
+// Read entity data from NBT
+entity.readFromNBT(tag);
+
+// Write only if entity is alive and has a registered type string
+// (used during world save — returns false and does nothing if entity is dead)
+boolean saved = entity.writeToNBTAtomically(tag);
+boolean saved = entity.writeToNBTOptional(tag);  // also skips passengers
+```
+
+### Collision and Physics Flags
+
+```java
+entity.isCollidedHorizontally  // hit a wall this tick
+entity.isCollidedVertically    // hit floor or ceiling this tick
+entity.isCollided              // either of the above
+entity.velocityChanged         // velocity was externally modified (used for network sync)
+entity.isAirBorne              // set when addVelocity() is called
+
+// Whether other entities can collide with this one (push it)
+entity.canBeCollidedWith()  // false by default on base Entity
+
+// Whether this entity pushes and is pushed by others
+entity.canBePushed()        // false by default on base Entity
+
+// Whether this entity triggers pressure plates / tripwires
+entity.doesEntityNotTriggerPressurePlate()  // false by default (i.e. it DOES trigger them)
+```
+
+### Dimension
+
+```java
+entity.dimension  // -1 = Nether, 0 = Overworld, 1 = End
+
+// Teleport to another dimension (server-side only)
+entity.changeDimension(dimensionId);
+```
+
+### Sound
+
+```java
+// Play a sound at this entity's position (respects isSilent())
+entity.playSound(SoundEvent soundIn, float volume, float pitch);
+
+// Mute all sounds from this entity
+entity.setSilent(true);
+entity.isSilent();
+```
+
+### Lighting and Rendering
+
+```java
+// Get combined sky+block light at the entity's position (0–15 each, packed)
+int combinedLight = entity.getBrightnessForRender();
+
+// Get the brightness as a 0.0–1.0 float
+float brightness = entity.getBrightness();
+
+// Whether the entity should render even outside the camera frustum
+entity.ignoreFrustumCheck = true;
+
+// The entity's render bounding box (may differ from collision box)
+AxisAlignedBB renderBox = entity.getRenderBoundingBox();
+```
+
+---
+
+## 19. COMMON QUESTIONS & ANSWERS
+
+---
+
+**Q: How do I run code every tick?**
+
+Hook into `TickEvent.ClientTickEvent` with phase `END`. Always null-check `mc.world` and `mc.player` before touching game state.
+
+```java
+@SubscribeEvent
+public void onTick(TickEvent.ClientTickEvent e) {
+    if (e.phase != TickEvent.Phase.END) return;
+    if (mc.world == null || mc.player == null) return;
+    // safe to run
+}
+```
+
+---
+
+**Q: What's the difference between a tick hook and a render hook?**
+
+Ticks run at a fixed 20 per second. Renders run as fast as the frame rate allows (often 60+). Game logic (movement, timers, packet sending) belongs in tick hooks. Visuals (drawing lines, HUD overlays) belong in render hooks. Mixing them causes bugs — for example, sending a packet in a render hook means you'll send it 60+ times per second instead of 20.
+
+---
+
+**Q: Why is mc.player null?**
+
+You're either in the main menu, on the loading screen, or between worlds. The player object only exists while you're inside an active world. Always guard with `if (mc.player == null) return;`.
+
+---
+
+**Q: How do I detect when the player joins a server?**
+
+Listen to `WorldEvent.Load` or `GuiOpenEvent` (listen for `GuiDownloadTerrain` which shows the "Loading terrain..." screen, then closes when spawned). The cleanest approach is hooking `NetHandlerPlayClient.handleJoinGame()` via mixin.
+
+---
+
+**Q: How do I send a packet without the game knowing?**
+
+Get the connection and call `sendPacket()` directly:
+
+```java
+mc.getConnection().sendPacket(new CPacketChatMessage("/command"));
+```
+
+This bypasses `EntityPlayerSP` entirely. The server receives it normally.
+
+---
+
+**Q: How do I stop the player from sending movement packets?**
+
+Override `onUpdateWalkingPlayer()` in `EntityPlayerSP` via mixin and cancel the call. Be aware: if you block movement packets entirely, the server will think you're idle and may rubber-band you back.
+
+---
+
+**Q: How do I open a chest's GUI without being near it?**
+
+The server sends `SPacketOpenWindow` when you interact with a block. You can intercept it, or fire `mc.displayGuiScreen(new GuiChest(...))` yourself — but the server won't recognize it as a valid open container. True chest access requires server-side interaction.
+
+---
+
+**Q: How do I detect if a specific item is in the player's hotbar?**
+
+```java
+for (int i = 0; i < 9; i++) {
+    ItemStack stack = mc.player.inventory.getStackInSlot(i);
+    if (!stack.isEmpty() && stack.getItem() == Items.DIAMOND_SWORD) {
+        // diamond sword is in hotbar slot i
+    }
+}
+```
+
+---
+
+**Q: How do I switch the player's hotbar slot?**
+
+```java
+mc.player.inventory.currentItem = 3; // switch to slot 3 (0-indexed)
+```
+
+This is client-side only. For it to register server-side, also send:
+
+```java
+mc.playerController.updateController(); // this syncs the held item each tick
+```
+
+Or trigger it manually:
+
+```java
+mc.getConnection().sendPacket(new CPacketHeldItemChange(3));
+```
+
+---
+
+**Q: How do I detect when the player takes damage?**
+
+Hook `NetHandlerPlayClient.handleUpdateHealth()`. This fires when the server corrects your health. The local player's health before this call is the predicted value; after the call it's the server-confirmed value.
+
+```java
+// Via mixin:
+@Inject(method = "handleUpdateHealth", at = @At("HEAD"))
+private void onHealthUpdate(SPacketUpdateHealth packet, CallbackInfo ci) {
+    float newHealth = packet.getHealth();
+    float oldHealth = mc.player.getHealth();
+    if (newHealth < oldHealth) {
+        float damage = oldHealth - newHealth;
+        // player took damage
+    }
+}
+```
+
+---
+
+**Q: How do I render text in the world (3D, floating)?**
+
+```java
+// In a RenderWorldLastEvent hook
+FontRenderer fr = mc.fontRenderer;
+GlStateManager.pushMatrix();
+GlStateManager.translate(x - viewX, y - viewY, z - viewZ);
+GlStateManager.rotate(-mc.getRenderManager().playerViewY, 0, 1, 0);
+GlStateManager.rotate(mc.getRenderManager().playerViewX, 1, 0, 0);
+GlStateManager.scale(-0.025f, -0.025f, 0.025f);
+GlStateManager.disableDepth();
+fr.drawStringWithShadow("Hello", -fr.getStringWidth("Hello") / 2, 0, 0xFFFFFF);
+GlStateManager.enableDepth();
+GlStateManager.popMatrix();
+```
+
+---
+
+**Q: How do I draw an ESP box around an entity?**
+
+Calculate the entity's axis-aligned bounding box, interpolate its position using `partialTicks`, then draw lines around it with GL_LINES. The render position must be offset by the camera's position (accessible from `mc.getRenderManager().viewerPosX/Y/Z`).
+
+---
+
+**Q: How do I detect what server I'm connected to?**
+
+```java
+// For direct connections
+ServerData server = mc.getCurrentServerData();
+if (server != null) {
+    String ip = server.serverIP;
+}
+
+// For LAN / integrated server
+if (mc.isSingleplayer()) {
+    // local world
+}
+```
+
+---
+
+**Q: How do I add something to the F3 debug screen?**
+
+Listen to `RenderGameOverlayEvent.Text` and add strings to `event.getLeft()` or `event.getRight()`:
+
+```java
+@SubscribeEvent
+public void onDebugRender(RenderGameOverlayEvent.Text event) {
+    if (!mc.gameSettings.showDebugInfo) return;
+    event.getLeft().add("MyMod: " + someValue);
+}
+```
+
+---
+
+**Q: How do I detect block changes in the world?**
+
+Listen to `WorldEvent` events, or hook `NetHandlerPlayClient.handleBlockChange()` and `handleMultiBlockChange()` via mixin. These fire every time the server tells the client a block changed.
+
+---
+
+**Q: What's the difference between EntityPlayerSP and AbstractClientPlayer?**
+
+`EntityPlayerSP` is specifically the local player you control. It handles input, packet sending, and movement.
+`AbstractClientPlayer` is a base class shared by all players visible on the client — including other players. It provides skins, capes, game mode info, and FOV modifiers. When you look up other players in the world, they are `AbstractClientPlayer` instances (or the subclass `OtherPlayerMP`). When you access yourself, you use `EntityPlayerSP` which extends both.
+
+---
+
+**Q: How do I make a key do something only once per press (not repeat while held)?**
+
+Use `KeyBinding.isPressed()` in your tick hook. It consumes the press and returns `true` only once per physical press:
+
+```java
+while (myKey.isPressed()) {
+    doThingOnce();
+}
+```
+
+Do not use `isKeyDown()` for this — it returns `true` every single tick while the key is held.
+
+---
+
+**Q: How do I know if a GUI screen is currently blocking input?**
+
+```java
+if (mc.currentScreen != null) {
+    // a screen is open — keyboard/mouse are captured by it
+    // keybindings registered the normal way will not fire
+}
+```
+
+---
+
+**Q: Can I access other players' inventories on the client?**
+
+No. The client only knows about other players' visible state (position, skin, held item, equipment slots). Their full inventory is server-side only and is never sent to other clients for privacy and anti-cheat reasons.
+
+---
+
+**Q: How do I play a sound only for the local player (no 3D position)?**
+
+```java
+mc.player.playSound(SoundEvents.ENTITY_PLAYER_LEVELUP, 1.0f, 1.0f);
+```
+
+This plays locally without broadcasting to other players or affecting 3D positioning.
+
+---
+
+**Q: How does the server correct the client's position?**
+
+The server sends `SPacketPlayerPosLook`. `NetHandlerPlayClient.handlePlayerPosLook()` receives it, teleports the player to the server's position, and sends a confirmation packet back. This is the "rubber banding" mechanic when you move somewhere the server disallows.
+
+---
+
+**Q: How do I get all nearby entities within a radius?**
+
+Use a bounding box centered on a position. Prefer `getDistanceSqToEntity()` over `getDistanceToEntity()` for filtering — it skips the square root and is faster in loops.
+
+```java
+double radius = 10.0;
+AxisAlignedBB box = mc.player.getEntityBoundingBox().expand(radius, radius, radius);
+List<Entity> nearby = mc.world.getEntitiesWithinAABB(Entity.class, box);
+
+for (Entity e : nearby) {
+    if (e == mc.player) continue;
+    if (e.getDistanceSqToEntity(mc.player) <= radius * radius) {
+        // within sphere radius, not just the bounding box
+    }
+}
+```
+
+---
+
+**Q: How do I check if an entity is on fire, sneaking, or sprinting?**
+
+These come from the entity's data manager flags and work on any entity, not just the player:
+
+```java
+entity.isBurning()    // currently on fire
+entity.isSneaking()   // crouching
+entity.isSprinting()  // sprinting
+entity.isInvisible()  // has invisibility
+entity.isGlowing()    // glowing outline
+entity.isRiding()     // mounted on a vehicle
+entity.isBeingRidden() // has a passenger
+```
+
+---
+
+**Q: How do I check if an entity is dead and should be ignored?**
+
+```java
+if (entity.isDead) continue;
+// or equivalently:
+if (!entity.isEntityAlive()) continue;
+```
+
+Always check this when iterating entity lists — entities that have been killed may still be in the list for a tick or two before being removed.
+
+---
+
+*End of guide.*

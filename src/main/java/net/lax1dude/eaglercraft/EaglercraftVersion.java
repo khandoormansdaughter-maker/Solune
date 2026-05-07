@@ -6,11 +6,11 @@ public class EaglercraftVersion {
 
 	/// Customize these to fit your fork:
 
-	public static final String projectForkName = "Eaglercraft 1.12";
-	public static final String projectForkVersion = "u2";
-	public static final String projectForkVendor = "PeytonPlayz585";
+	public static final String projectForkName = "Solune";
+	public static final String projectForkVersion = "1.0";
+	public static final String projectForkVendor = "khandoormansdaughter-maker";
 
-	public static final String projectForkURL = "https://github.com/Eaglercraft-1-12/1.12";
+	public static final String projectForkURL = "https://github.com/khandoormansdaughter-maker/Solune";
 
 	//////////////////////////////////////////////////////////////////////
 

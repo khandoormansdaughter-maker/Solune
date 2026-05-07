@@ -18,27 +18,29 @@ public class ClickGuiScreen extends GuiScreen {
     //I won't go into too much detail here but if you need help contact me on discord, reach out to me.
     //Discord : isacofff
 
-    private static final int PANEL_BG = 0x6688AADD;
-    private static final int PANEL_OUTLINE = 0x66AAD4FF;
-    private static final int MODULE_ENABLED = 0x66AAD4FF;
-    private static final int MODULE_DISABLED = 0x6688AADD;
-    private static final int TEXT_COLOR = -1;
-    private static final int ACCENT_COLOR = 0x66CCE6FF;
+    private static final int PANEL_BG = 0xCCFFFFFF; // Light white background
+    private static final int PANEL_OUTLINE = 0xCC000000; // Black outline
+    private static final int MODULE_ENABLED = 0xCC00AA00; // Green for enabled
+    private static final int MODULE_DISABLED = 0xCCAAAAAA; // Gray for disabled
+    private static final int TEXT_COLOR = 0xFF000000; // Black text
+    private static final int ACCENT_COLOR = 0xFF0000FF; // Blue accent
     private static final int PANEL_MOVE_SPEED = 15;
-    private static final int SLIDER_BG = 0x6699CCFF;
-    private static final int SLIDER_FILL = 0x667799BB;
-    private static final int SLIDER_KNOB = -1;
+    private static final int SLIDER_BG = 0xCCDDDDDD;
+    private static final int SLIDER_FILL = 0xCC888888;
+    private static final int SLIDER_KNOB = 0xFF000000;
 
     private final ArrayList<Panel> panels = new ArrayList<>();
 
     public ClickGuiScreen() {
-        int x = 1;
-        int y = 1;
+        int screenWidth = 400; // Assume a width
+        int panelWidth = 120;
+        int totalWidth = Category.values().length * panelWidth;
+        int startX = (screenWidth - totalWidth) / 2;
+        int y = 80;
 
         for (Category cat : Category.values()) {
-            //Cat :3
-            panels.add(new Panel(cat, x, y));
-            x += 91;
+            panels.add(new Panel(cat, startX, y));
+            startX += panelWidth;
         }
     }
 
@@ -55,31 +57,18 @@ public class ClickGuiScreen extends GuiScreen {
 
     @Override
     public void updateScreen() {
-
-        int movex = 0;
-        int movey = 0;
-
-        if (Keyboard.isKeyDown(KeyboardConstants.KEY_UP))
-            movey = - PANEL_MOVE_SPEED;
-        if (Keyboard.isKeyDown(KeyboardConstants.KEY_DOWN))
-            movey =  PANEL_MOVE_SPEED;
-        if (Keyboard.isKeyDown(KeyboardConstants.KEY_LEFT))
-            movex = - PANEL_MOVE_SPEED;
-        if (Keyboard.isKeyDown(KeyboardConstants.KEY_RIGHT))
-            movex =  PANEL_MOVE_SPEED;
-
-        if (movex != 0 || movey != 0) {
-            for (Panel panel : panels) {
-                panel.x += movex;
-                panel.y += movey;
-            }
-        }
+        // Removed movement controls for a cleaner look
     }
 
     @Override
     public void drawScreen(int mouseX, int mouseY, float partialTicks) {
 
-        this.drawDefaultBackground();
+        drawRect(0, 0, width, height, 0xFFF0F0F0); // Light gray background
+
+        // Draw title
+        String title = "Solune Client Settings";
+        int titleWidth = fontRendererObj.getStringWidth(title);
+        fontRendererObj.drawString(title, (width - titleWidth) / 2, 20, TEXT_COLOR);
 
         for (Panel panel : panels) {
             panel.draw(mouseX, mouseY);
@@ -145,9 +134,7 @@ public class ClickGuiScreen extends GuiScreen {
 
     public class Panel {
         public Category category;
-        public int x, y, width = 90, height = 16;
-        public boolean dragging = false;
-        public int dragX, dragY;
+        public int x, y, width = 120, height = 20;
         public boolean open = true;
         private NumberSetting draggingSlider = null;
         private int sliderX = 0;
@@ -169,17 +156,17 @@ public class ClickGuiScreen extends GuiScreen {
 
             for (Module module : Client.INSTANCE.manager.getModulesByCategory(category)) {
 
-                if (isHover(mouseX, mouseY, x, y + offset, width, 14)) {
+                if (isHover(mouseX, mouseY, x, y + offset, width, 16)) {
                     return module.getDescription();
                 }
-                offset += 14;
+                offset += 16;
 
                 if (module.open && hasSettings(module)) {
                     for (Setting<?> setting : module.getSettings()) {
-                        if (isHover(mouseX, mouseY, x, y + offset, width, 14)) {
+                        if (isHover(mouseX, mouseY, x, y + offset, width, 16)) {
                             return setting.getName();
                         }
-                        offset += 14;
+                        offset += 16;
                     }
                 }
             }
@@ -190,12 +177,7 @@ public class ClickGuiScreen extends GuiScreen {
         public void draw(int mouseX, int mouseY) {
 
             if (!Mouse.isButtonDown(0)) {
-                dragging = false;
                 draggingSlider = null;
-            }
-            if (dragging) {
-                this.x = mouseX - dragX;
-                this.y = mouseY - dragY;
             }
 
             if (open) {
@@ -206,7 +188,7 @@ public class ClickGuiScreen extends GuiScreen {
 
             drawRect(x, y, x + width, y + height, PANEL_BG);
 
-            fontRendererObj.drawString(category.name(), x + 4, y + 4, TEXT_COLOR);
+            fontRendererObj.drawString(category.name(), x + 4, y + 6, TEXT_COLOR);
 
             if (open) {
 
@@ -214,21 +196,21 @@ public class ClickGuiScreen extends GuiScreen {
 
                 for (Module module : Client.INSTANCE.manager.getModulesByCategory(category)) {
 
-                    drawRect(x, y + offset, x + width, y + offset + 14, module.isEnabled() ? MODULE_ENABLED : MODULE_DISABLED);
+                    drawRect(x, y + offset, x + width, y + offset + 16, module.isEnabled() ? MODULE_ENABLED : MODULE_DISABLED);
 
                     String symbol = module.open ? "-" : "+";
                     fontRendererObj.drawString(symbol, x + width - 10, y + offset + 4, ACCENT_COLOR);
                     fontRendererObj.drawString(module.getName(), x + 4, y + offset + 4, TEXT_COLOR);
 
-                    offset += 14;
+                    offset += 16;
 
                     if (module.open && hasSettings(module)) {
                         for (Setting<?> setting : module.getSettings()) {
 
-                            drawRect(x, y + offset, x + width, y + offset + 14, MODULE_DISABLED);
+                            drawRect(x, y + offset, x + width, y + offset + 16, MODULE_DISABLED);
                             drawSetting(setting, x, y + offset);
 
-                            offset += 14;
+                            offset += 16;
                         }
                     }
                 }
@@ -237,17 +219,20 @@ public class ClickGuiScreen extends GuiScreen {
 
         private void drawSetting(Setting<?> s, int x, int y) {
 
-            if (s instanceof BooleanSetting bs) {
+            if (s instanceof BooleanSetting) {
+                BooleanSetting bs = (BooleanSetting) s;
                 fontRendererObj.drawString(bs.getName() + " : " + bs.getValue(), x + 4, y + 4, TEXT_COLOR);
                 return;
             }
 
-            if (s instanceof ModeSetting ms) {
+            if (s instanceof ModeSetting) {
+                ModeSetting ms = (ModeSetting) s;
                 fontRendererObj.drawString(ms.getName() + " : " + ms.getValue() + " ...", x + 4, y + 4, TEXT_COLOR);
                 return;
             }
 
-            if (s instanceof NumberSetting number) {
+            if (s instanceof NumberSetting) {
+                NumberSetting number = (NumberSetting) s;
                 drawRect(x, y, x + width, y + 14, MODULE_DISABLED);
                 fontRendererObj.drawString(number.getName() + " : " + number.getValue(), x + 4, y + 4, TEXT_COLOR);
                 int barX = x + 4;
@@ -279,24 +264,12 @@ public class ClickGuiScreen extends GuiScreen {
                     draggingSlider.setValue(Math.max(draggingSlider.getMin(), Math.min(draggingSlider.getMax(), rawValue)));
                 }
             }
-
-            if (dragging && mouseButton == 0) {
-                this.x = mouseX - dragX;
-                this.y = mouseY - dragY;
-            }
         }
 
         public void mouseClicked(int mouseX, int mouseY, int mouseButton) {
             if (isHover(mouseX, mouseY, x, y, width, height)) {
 
-                if (mouseButton == 0) {
-                    dragging = true;
-                    dragX = mouseX - x;
-                    dragY = mouseY - y;
-                }
-
                 if (mouseButton == 1) {
-                    dragging = false;
                     open = !open;
                 }
 
@@ -309,7 +282,7 @@ public class ClickGuiScreen extends GuiScreen {
 
                 for (Module module : Client.INSTANCE.manager.getModulesByCategory(category)) {
 
-                    if (isHover(mouseX, mouseY, x, y + offset, width, 14)) {
+                    if (isHover(mouseX, mouseY, x, y + offset, width, 16)) {
 
                         int gearSize = 12;
                         int gearX = x + width - gearSize - 4;
@@ -338,7 +311,7 @@ public class ClickGuiScreen extends GuiScreen {
                     if (module.open && hasSettings(module)) {
                         for (Setting<?> setting : module.getSettings()) {
 
-                            if (isHover(mouseX, mouseY, x, y + offset, width, 14)) {
+                            if (isHover(mouseX, mouseY, x, y + offset, width, 16)) {
 
                                 if (setting instanceof BooleanSetting && mouseButton == 0) {
                                     ((BooleanSetting) setting).toggle();
@@ -385,9 +358,9 @@ public class ClickGuiScreen extends GuiScreen {
         private int getTotalHeight() {
             int total = height;
             for (Module module : Client.INSTANCE.manager.getModulesByCategory(category)) {
-                total += 14;
+                total += 16;
                 if (module.open && hasSettings(module)) {
-                    total += module.getSettings().size() * 14;
+                    total += module.getSettings().size() * 16;
                 }
             }
             return total;

@@ -1,0 +1,14 @@
+
+> Task :compileJava
+Note: /workspaces/Solune/src/game/java/net/minecraft/client/Minecraft.java uses unchecked or unsafe operations.
+Note: Recompile with -Xlint:unchecked for details.
+
+> Task :processResources NO-SOURCE
+> Task :classes
+> Task :compileTeavmJava UP-TO-DATE
+> Task :processTeavmResources NO-SOURCE
+> Task :teavmClasses UP-TO-DATE
+> Task :generateJavaScript
+
+BUILD SUCCESSFUL in 39s
+3 actionable tasks: 2 executed, 1 up-to-date

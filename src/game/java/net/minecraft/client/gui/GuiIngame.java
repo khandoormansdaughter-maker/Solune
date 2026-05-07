@@ -345,6 +345,11 @@ public class GuiIngame extends Gui {
 		GlStateManager.color(1.0F, 1.0F, 1.0F, 1.0F);
 		GlStateManager.disableLighting();
 		GlStateManager.enableAlpha();
+
+		// Custom client render
+		if (com.isacofff.clientbase.Client.manager != null) {
+			com.isacofff.clientbase.Client.manager.onRender();
+		}
 	}
 
 	public void renderAttackIndicator(float p_184045_1_, ScaledResolution p_184045_2_) {
