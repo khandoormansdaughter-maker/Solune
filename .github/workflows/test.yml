@@ -3,9 +3,7 @@ name: Build Offline Download
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
-      - master
+    branches: [main, master]
 
 permissions:
   contents: write
@@ -26,42 +24,32 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - name: Make scripts executable
-        run: |
-          chmod +x ./gradlew || true
-          chmod +x CompileEPK || true
-          chmod +x CompileJS || true
-          chmod +x MakeOfflineDownload || true
+      - name: Grant execute permission
+        run: chmod +x gradlew
 
-      - name: Run CompileEPK
-        run: ./CompileEPK
+      - name: Build JS (Gradle)
+        run: ./gradlew generateJavaScript
 
-      - name: Run CompileJS
-        run: ./CompileJS
+      - name: Make Offline Download (Gradle)
+        run: ./gradlew MakeOfflineDownload
 
-      - name: Run MakeOfflineDownload
-        run: ./MakeOfflineDownload
-
-      - name: Copy offline download to Client/Test.html
+      - name: Copy offline HTML
         run: |
           mkdir -p Client
-
           FILE=$(find javascript -type f \( -name "*.html" -o -name "*.htm" \) | head -n 1)
 
           if [ -z "$FILE" ]; then
-            echo "No offline HTML file found!"
+            echo "No HTML output found in javascript/"
             exit 1
           fi
 
           cp "$FILE" Client/Test.html
 
-      - name: Commit and push Test.html
+      - name: Commit and push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           git add Client/Test.html
-
-          git commit -m "Auto-build offline download" || echo "No changes to commit"
-
+          git commit -m "Auto-build offline download" || echo "No changes"
           git push
