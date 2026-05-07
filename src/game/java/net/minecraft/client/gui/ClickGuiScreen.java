@@ -32,20 +32,37 @@ public class ClickGuiScreen extends GuiScreen {
     private final ArrayList<Panel> panels = new ArrayList<>();
 
     public ClickGuiScreen() {
-        int screenWidth = 400; // Assume a width
+        // Panels will be positioned in initGui when screen size is known
+    }
+
+    @Override
+    public void initGui() {
+        super.initGui();
+        positionPanels();
+    }
+
+    private void positionPanels() {
+        panels.clear();
         int panelWidth = 100;
-        int panelsPerRow = 3;
-        int x = 10;
-        int y = 80;
+        int panelsPerRow = 2; // Reduced to 2 per row to prevent overflow
+        int margin = 10;
+        int startY = 80;
+        int x = margin;
+        int y = startY;
         int count = 0;
+        int maxHeightInRow = 0;
 
         for (Category cat : Category.values()) {
-            panels.add(new Panel(cat, x, y));
-            x += panelWidth + 10;
+            Panel panel = new Panel(cat, x, y);
+            panels.add(panel);
+            maxHeightInRow = Math.max(maxHeightInRow, panel.getTotalHeight());
+            x += panelWidth + margin;
             count++;
             if (count % panelsPerRow == 0) {
-                x = 10;
-                y += 200; // Estimate height
+                // Move to next row
+                x = margin;
+                y += maxHeightInRow + margin;
+                maxHeightInRow = 0;
             }
         }
     }
