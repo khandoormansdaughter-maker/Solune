@@ -1,55 +1,84 @@
-name: Build Offline Download
+name: Build Eaglercraft Offline Download
 
 on:
-  workflow_dispatch:
   push:
-    branches: [main, master]
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  build-offline:
+  build:
     runs-on: ubuntu-latest
 
     steps:
+      # Checkout repository with push permissions
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           persist-credentials: true
+          fetch-depth: 0
 
-      - name: Setup Java
+      # Java setup
+      - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
+          java-version: "17"
           distribution: temurin
-          java-version: 17
 
-      - name: Grant execute permission
-        run: chmod +x gradlew
-
-      - name: Build JS (Gradle)
-        run: ./gradlew generateJavaScript
-
-      - name: Make Offline Download (Gradle)
-        run: ./gradlew MakeOfflineDownload
-
-      - name: Copy offline HTML
+      # Make scripts executable
+      - name: Grant execute permissions on scripts
         run: |
-          mkdir -p Client
-          FILE=$(find javascript -type f \( -name "*.html" -o -name "*.htm" \) | head -n 1)
+          chmod +x CompileEPK.sh
+          chmod +x CompileJS.sh
+          chmod +x MakeOfflineDownload.sh
 
-          if [ -z "$FILE" ]; then
-            echo "No HTML output found in javascript/"
+      # Build steps
+      - name: Run CompileEPK
+        run: ./CompileEPK.sh
+
+      - name: Run CompileJS
+        run: ./CompileJS.sh
+
+      - name: Run MakeOfflineDownload
+        run: ./MakeOfflineDownload.sh
+
+      # Prepare output directory
+      - name: Create Lumina output directory
+        run: mkdir -p Lumina
+
+      # Select correct offline HTML
+      - name: Copy offline download to Lumina/Lumina.html
+        run: |
+          if [ -f "javascript/Eaglercraft_1.12_Offline_en_US.html" ]; then
+            OFFLINE_FILE="javascript/Eaglercraft_1.12_Offline_en_US.html"
+          elif [ -f "javascript/Eaglercraft_1.12_Offline_International.html" ]; then
+            OFFLINE_FILE="javascript/Eaglercraft_1.12_Offline_International.html"
+          else
+            echo "Error: No offline HTML file found"
+            echo "Contents of javascript/:"
+            ls -R javascript/
             exit 1
           fi
 
-          cp "$FILE" Client/Test.html
+          cp "$OFFLINE_FILE" Lumina/Lumina.html
+          echo "Copied $OFFLINE_FILE -> Lumina/Lumina.html"
 
-      - name: Commit and push
+      # Commit and push only if changed
+      - name: Commit and push Lumina/Lumina.html
+        if: github.event_name != 'pull_request'
         run: |
+          git config user.email "github-actions[bot]@users.noreply.github.com"
           git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add Client/Test.html
-          git commit -m "Auto-build offline download" || echo "No changes"
-          git push
+          git add Lumina/Lumina.html
+
+          if ! git diff --staged --quiet; then
+            git commit -m "ci: update Lumina/Lumina.html offline build [skip ci]"
+            git push origin HEAD:${GITHUB_REF_NAME}
+          else
+            echo "No changes to commit"
+          fi
