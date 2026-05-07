@@ -67,13 +67,20 @@ jobs:
           cp "$OFFLINE_FILE" Lumina/Test.html
           echo "Copied $OFFLINE_FILE -> Lumina/Test.html"
 
-      # Commit and push only if changed
-      - name: Commit and push Lumina/Test.html
+      # Sync with remote before committing (prevents push failures)
+      - name: Rebase with remote main
         if: github.event_name != 'pull_request'
         run: |
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git config user.name "github-actions[bot]"
 
+          git fetch origin main
+          git pull --rebase origin main || true
+
+      # Commit and push only if changed
+      - name: Commit and push Lumina/Test.html
+        if: github.event_name != 'pull_request'
+        run: |
           git add Lumina/Test.html
 
           if ! git diff --staged --quiet; then
