@@ -51,7 +51,7 @@ jobs:
         run: mkdir -p Lumina
 
       # Select correct offline HTML
-      - name: Copy offline download to Lumina/Lumina.html
+      - name: Copy offline download to Lumina/Test.html
         run: |
           if [ -f "javascript/Eaglercraft_1.12_Offline_en_US.html" ]; then
             OFFLINE_FILE="javascript/Eaglercraft_1.12_Offline_en_US.html"
@@ -64,20 +64,20 @@ jobs:
             exit 1
           fi
 
-          cp "$OFFLINE_FILE" Lumina/Lumina.html
-          echo "Copied $OFFLINE_FILE -> Lumina/Lumina.html"
+          cp "$OFFLINE_FILE" Lumina/Test.html
+          echo "Copied $OFFLINE_FILE -> Lumina/Test.html"
 
       # Commit and push only if changed
-      - name: Commit and push Lumina/Lumina.html
+      - name: Commit and push Lumina/Test.html
         if: github.event_name != 'pull_request'
         run: |
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git config user.name "github-actions[bot]"
 
-          git add Lumina/Lumina.html
+          git add Lumina/Test.html
 
           if ! git diff --staged --quiet; then
-            git commit -m "ci: update Lumina/Lumina.html offline build [skip ci]"
+            git commit -m "ci: update Lumina/Test.html offline build [skip ci]"
             git push origin HEAD:${GITHUB_REF_NAME}
           else
             echo "No changes to commit"
